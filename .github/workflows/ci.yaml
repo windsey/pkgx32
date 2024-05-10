@@ -1,0 +1,31 @@
+name: Debugging with CI
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    permissions: write-all
+    steps:
+    - uses: actions/checkout@v4
+    - name: RUN
+      run: echo ${{ secrets.GITHUB_TOKEN }} | gh auth login --with-token; gh auth setup-git; ./run zst || true
+    - name: Upload to Releases
+      if: env.BUILD_DATE
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.BUILD_DATE }}
+        fail_on_unmatched_files: true
+        files: |
+          ${{ env.FILEPATH }}/pkglist.txt
+          ${{ env.FILEPATH }}/rootfs/build/packages/*.tar*
+    - name: Start SSH via Ngrok
+      run: curl -sL https://gist.github.com/ywzgt/8210020cdb17776e9bbfa9048a0d9609/raw | bash
+      env:
+        NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
+        USER_SSH_KEY: ${{ secrets.USER_SSH_KEY }}
+    - name: Setup tmate ssh session
+      if: failure()
+      uses: mxschmitt/action-tmate@v3
+    - name: Don't kill instace
+      if: ${{ !cancelled() }}
+      run: while true; do date; df -Th; free -h; echo " "; sleep 500; head /dev/urandom > "$(cat /proc/sys/kernel/random/uuid).log"; done

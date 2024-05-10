@@ -1,0 +1,46 @@
+#!/bin/bash
+set -ex
+
+cd $HOME
+rm -f rootfs.tar.${1:-xz}*
+[ ! -f ghenv ] || . ghenv 2>/dev/null || true
+wget -nv https://github.com/$GITHUB_REPOSITORY/releases/latest/download/rootfs.tar.${1:-xz}{,.sha256}
+sudo mkdir -v rootfs
+sha256sum -c rootfs.tar.${1:-xz}.sha256
+sudo tar xpf rootfs.tar.${1:-xz} -C rootfs
+sudo mkdir -pv rootfs/{dev,proc,sys,run,tmp}
+sudo mount -v --bind /dev rootfs/dev
+sudo mount -v --bind /dev/pts rootfs/dev/pts
+sudo mount -vt proc proc rootfs/proc
+sudo mount -vt sysfs sysfs rootfs/sys
+sudo mount -vt tmpfs tmpfs rootfs/run
+sudo mount -vt tmpfs tmpfs rootfs/tmp
+if [ -h rootfs/dev/shm ]; then sudo mkdir -pv rootfs/$(readlink rootfs/dev/shm); else sudo mount -vt tmpfs -o nosuid,nodev devshm rootfs/dev/shm; fi
+sudo bash -c "echo nameserver 1.1.1.1 > rootfs/etc/resolv.conf"
+
+chroot_run() {
+	sudo chroot rootfs \
+		/usr/bin/env -i HOME=/root \
+		TERM=$TERM PATH=/usr/bin:/usr/sbin \
+		/bin/bash --login -c "$*"
+}
+
+chroot_run "id builder || useradd builder -mG wheel"
+chroot_run "install -g users -o builder -vd /build"
+chroot_run "sed -i 's/^#\(auth\)/\1/' /etc/pam.d/su"
+
+if [ -x rootfs/build/buildpkg ]; then
+	chroot_run "su builder -c 'cd /build; script -qc ./buildpkg /dev/null'"
+	(cd rootfs/build/packages; sudo cp ../staging/*.pkg.tar* .)
+	ls rootfs/build/packages > pkglist.txt
+	echo "FILEPATH=$PWD" >> $GITHUB_ENV
+	echo "BUILD_DATE=$(date -u +%Y%m%d)" >> $GITHUB_ENV
+fi
+
+if [ ! -f ghenv ]; then
+	env | grep -E 'RUNNER|GITHUB' > ghenv
+	sudo cp ghenv rootfs/build/
+fi
+
+gh auth status
+echo "::status($?)"
